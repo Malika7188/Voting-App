@@ -103,6 +103,102 @@ const ALL_UNLOCK_STEWARDS = [
   }
 ]
 
+// Wallet configuration
+const WALLET_CONFIG = [
+  {
+    id: 'metamask',
+    name: 'MetaMask',
+    icon: '🦊',
+    description: 'Most popular Ethereum wallet',
+    type: 'injected',
+    checkAvailability: () => {
+      if (typeof window === 'undefined' || !window.ethereum) return false
+      
+      // Check for multiple providers
+      if (window.ethereum.providers && window.ethereum.providers.length > 0) {
+        return window.ethereum.providers.some(p => p.isMetaMask && !p.isRainbow && !p.isCoinbaseWallet && !p.isTrust)
+      }
+      
+      // Single provider
+      return window.ethereum.isMetaMask && !window.ethereum.isRainbow && !window.ethereum.isCoinbaseWallet && !window.ethereum.isTrust
+    },
+    downloadUrl: 'https://metamask.io/download/'
+  },
+  {
+    id: 'walletconnect',
+    name: 'WalletConnect',
+    icon: '👛',
+    description: 'Connect 100+ mobile wallets',
+    type: 'walletconnect',
+    checkAvailability: () => true // Always available
+  },
+  {
+    id: 'rainbow',
+    name: 'Rainbow Wallet',
+    icon: '🌈',
+    description: 'Beautiful Ethereum wallet',
+    type: 'injected',
+    checkAvailability: () => {
+      if (typeof window === 'undefined' || !window.ethereum) return false
+      
+      // Check for multiple providers
+      if (window.ethereum.providers && window.ethereum.providers.length > 0) {
+        return window.ethereum.providers.some(p => p.isRainbow)
+      }
+      
+      // Single provider
+      return window.ethereum.isRainbow
+    },
+    downloadUrl: 'https://rainbow.me/'
+  },
+  {
+    id: 'coinbase',
+    name: 'Coinbase Wallet',
+    icon: '🟦',
+    description: 'Secure wallet from Coinbase',
+    type: 'injected',
+    checkAvailability: () => {
+      if (typeof window === 'undefined' || !window.ethereum) return false
+      
+      // Check for multiple providers
+      if (window.ethereum.providers && window.ethereum.providers.length > 0) {
+        return window.ethereum.providers.some(p => p.isCoinbaseWallet)
+      }
+      
+      // Single provider
+      return window.ethereum.isCoinbaseWallet || window.coinbaseWalletExtension
+    },
+    downloadUrl: 'https://www.coinbase.com/wallet'
+  },
+  {
+    id: 'trust',
+    name: 'Trust Wallet',
+    icon: '🛡️',
+    description: 'Secure crypto wallet',
+    type: 'injected',
+    checkAvailability: () => {
+      if (typeof window === 'undefined' || !window.ethereum) return false
+      
+      // Check for multiple providers
+      if (window.ethereum.providers && window.ethereum.providers.length > 0) {
+        return window.ethereum.providers.some(p => p.isTrust)
+      }
+      
+      // Single provider
+      return window.ethereum.isTrust
+    },
+    downloadUrl: 'https://trustwallet.com/'
+  },
+  {
+    id: 'mobile',
+    name: 'Mobile Wallet',
+    icon: '📱',
+    description: 'Any mobile wallet via WalletConnect',
+    type: 'walletconnect',
+    checkAvailability: () => true
+  }
+]
+
 // UP Token ABI for delegation
 const UP_TOKEN_ABI = [
   {
@@ -136,8 +232,14 @@ const UP_TOKEN_ABI = [
 ]
 
 function App() {
+  // Collapsible sections for Delegations and Dedelegations
+  const [showDelegationsSection, setShowDelegationsSection] = useState(false)
+  const [showDedelegationsSection, setShowDedelegationsSection] = useState(false)
   const [account, setAccount] = useState('')
   const [isConnected, setIsConnected] = useState(false)
+  const [connectedWallet, setConnectedWallet] = useState(null)
+  const [connectedProvider, setConnectedProvider] = useState(null)
+  const [showWalletModal, setShowWalletModal] = useState(false)
   const [balance, setBalance] = useState('0')
   const [votingPower, setVotingPower] = useState('0')
   const [currentDelegate, setCurrentDelegate] = useState('')
@@ -159,7 +261,13 @@ function App() {
   useEffect(() => {
     const saved = localStorage.getItem('unlock_delegations')
     if (saved) {
-      setDelegationHistory(JSON.parse(saved))
+      try {
+        const parsedHistory = JSON.parse(saved)
+        setDelegationHistory(parsedHistory)
+      } catch (error) {
+        console.error('Error loading delegation history:', error)
+        setDelegationHistory([])
+      }
     }
   }, [])
 
@@ -181,10 +289,38 @@ function App() {
       setEnsNames(names)
     }
     
-    if (window.ethereum) {
+    if (isConnected) {
       loadEnsNames()
     }
-  }, [])
+  }, [isConnected])
+
+  // Initialize WalletConnect
+  const initWalletConnect = async () => {
+    try {
+      // In a real app, you'd use @walletconnect/web3-provider
+      // For demo purposes, we'll simulate the connection
+      const provider = {
+        enable: async () => {
+          // Simulate WalletConnect connection
+          await new Promise(resolve => setTimeout(resolve, 2000))
+          return ['0x1234567890123456789012345678901234567890'] // Demo address
+        },
+        request: async (params) => {
+          // Simulate wallet requests
+          if (params.method === 'eth_requestAccounts') {
+            return ['0x1234567890123456789012345678901234567890']
+          }
+          return null
+        }
+      }
+      
+      setConnectedProvider(provider)
+      return provider
+    } catch (error) {
+      console.error('Failed to initialize WalletConnect:', error)
+      throw error
+    }
+  }
 
   // Resolve ENS name for an address
   const resolveENS = async (address) => {
@@ -206,57 +342,150 @@ function App() {
     return formatAddress(address)
   }
 
-  // Connect wallet
-  const connectWallet = async () => {
-    if (typeof window.ethereum !== 'undefined') {
-      try {
-        const accounts = await window.ethereum.request({
-          method: 'eth_requestAccounts'
-        })
-        
-        // Switch to Base network
-        try {
-          await window.ethereum.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: '0x2105' }], // Base chain ID
-          })
-        } catch (switchError) {
-          if (switchError.code === 4902) {
-            await window.ethereum.request({
-              method: 'wallet_addEthereumChain',
-              params: [{
-                chainId: '0x2105',
-                chainName: 'Base',
-                nativeCurrency: {
-                  name: 'ETH',
-                  symbol: 'ETH',
-                  decimals: 18
-                },
-                rpcUrls: ['https://mainnet.base.org'],
-                blockExplorerUrls: ['https://basescan.org']
-              }]
-            })
-          }
-        }
-        
-        setAccount(accounts[0])
-        setIsConnected(true)
-        setMessage('Wallet connected successfully!')
-        
-        // Get token info
-        await getTokenInfo(accounts[0])
-        
-      } catch (error) {
-        setMessage('Failed to connect wallet: ' + error.message)
+  // Get specific wallet provider
+  const getWalletProvider = (walletId) => {
+    if (typeof window.ethereum === 'undefined') {
+      return null
+    }
+
+    // Handle multiple wallet providers
+    if (window.ethereum.providers && window.ethereum.providers.length > 0) {
+      // Multiple wallets installed
+      const providers = window.ethereum.providers
+      
+      switch (walletId) {
+        case 'metamask':
+          return providers.find(p => p.isMetaMask && !p.isRainbow && !p.isCoinbaseWallet && !p.isTrust) || 
+                 providers.find(p => p.isMetaMask)
+        case 'rainbow':
+          return providers.find(p => p.isRainbow)
+        case 'coinbase':
+          return providers.find(p => p.isCoinbaseWallet)
+        case 'trust':
+          return providers.find(p => p.isTrust)
+        default:
+          return window.ethereum
       }
     } else {
-      setMessage('Please install MetaMask!')
+      // Single wallet provider
+      const provider = window.ethereum
+      
+      switch (walletId) {
+        case 'metamask':
+          return provider.isMetaMask ? provider : null
+        case 'rainbow':
+          return provider.isRainbow ? provider : null
+        case 'coinbase':
+          return provider.isCoinbaseWallet ? provider : null
+        case 'trust':
+          return provider.isTrust ? provider : null
+        default:
+          return provider
+      }
     }
   }
 
-  // Create contract instance using Web3 directly
+  // Connect to specific wallet
+  const connectWallet = async (walletId) => {
+    setIsLoading(true)
+    setMessage('Connecting to wallet...')
+    
+    try {
+      let accounts = []
+      let provider = null
+      const walletConfig = WALLET_CONFIG.find(w => w.id === walletId)
+      
+      if (walletId === 'walletconnect' || walletId === 'mobile') {
+        // WalletConnect connection
+        provider = await initWalletConnect()
+        accounts = await provider.enable()
+      } else {
+        // Get the specific wallet provider
+        provider = getWalletProvider(walletId)
+        
+        if (!provider) {
+          // If specific wallet not found, show download link
+          const downloadUrl = walletConfig?.downloadUrl
+          if (downloadUrl) {
+            setMessage(`❌ ${walletConfig.name} is not installed. Please install it first.`)
+            setTimeout(() => {
+              window.open(downloadUrl, '_blank')
+            }, 2000)
+            return
+          } else {
+            throw new Error(`${walletConfig.name} is not installed.`)
+          }
+        }
+        
+        // Connect with the specific wallet provider
+        accounts = await provider.request({
+          method: 'eth_requestAccounts'
+        })
+      }
+      
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No accounts found')
+      }
+      
+      // Switch to Base network
+      try {
+        await provider.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: '0x2105' }], // Base chain ID
+        })
+      } catch (switchError) {
+        if (switchError.code === 4902) {
+          await provider.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: '0x2105',
+              chainName: 'Base',
+              nativeCurrency: {
+                name: 'ETH',
+                symbol: 'ETH',
+                decimals: 18
+              },
+              rpcUrls: ['https://mainnet.base.org'],
+              blockExplorerUrls: ['https://basescan.org']
+            }]
+          })
+        }
+      }
+      
+      setAccount(accounts[0])
+      setIsConnected(true)
+      setConnectedWallet(walletConfig)
+      setConnectedProvider(provider)
+      setShowWalletModal(false)
+      setMessage(`✅ Connected to ${walletConfig.name}!`)
+      
+      // Get token info
+      await getTokenInfo(accounts[0])
+      
+    } catch (error) {
+      console.error('Connection error:', error)
+      setMessage('❌ Failed to connect: ' + error.message)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Disconnect wallet
+  const disconnectWallet = () => {
+    setAccount('')
+    setIsConnected(false)
+    setConnectedWallet(null)
+    setConnectedProvider(null)
+    setBalance('0')
+    setVotingPower('0')
+    setCurrentDelegate('')
+    setMessage('Wallet disconnected')
+  }
+
+  // Create contract instance using the connected provider
   const createContract = () => {
-    if (!window.ethereum) return null
+    const provider = connectedProvider || window.ethereum
+    if (!provider) return null
     
     return {
       call: async (functionName, params = []) => {
@@ -292,6 +521,7 @@ function App() {
         const functionAbi = UP_TOKEN_ABI.find(f => f.name === functionName)
         if (!functionAbi) throw new Error(`Function ${functionName} not found`)
         
+        // Use the specific connected provider for transactions
         const txParams = {
           to: UP_TOKEN_ADDRESS,
           from: account,
@@ -299,7 +529,8 @@ function App() {
           gas: '0x15F90',
         }
         
-        const txHash = await window.ethereum.request({
+        // Make sure we're using the correct provider
+        const txHash = await provider.request({
           method: 'eth_sendTransaction',
           params: [txParams],
         })
@@ -311,7 +542,7 @@ function App() {
             let attempts = 0
             while (!receipt && attempts < 30) {
               try {
-                receipt = await window.ethereum.request({
+                receipt = await provider.request({
                   method: 'eth_getTransactionReceipt',
                   params: [txHash],
                 })
@@ -333,8 +564,6 @@ function App() {
 
   // Get token balance and delegation info
   const getTokenInfo = async (address) => {
-    if (!window.ethereum) return
-    
     try {
       const contract = createContract()
       if (!contract) return
@@ -358,8 +587,8 @@ function App() {
     }
   }
 
-  // Delegate tokens
-  const handleDelegate = async () => {
+  // Delegate tokens (with dedelegation tracking)
+  const handleDelegate = async (forceSelf = false) => {
     if (!isConnected) {
       setMessage('Please connect your wallet first!')
       return
@@ -367,69 +596,97 @@ function App() {
 
     let delegateTo = ''
     let delegateeName = ''
+    let delegationActionType = 'delegation'
 
-    switch (delegationType) {
-      case 'self':
-        delegateTo = account
-        delegateeName = 'Self'
-        break
-      case 'steward':
-        if (!selectedSteward) {
-          setMessage('Please select a steward!')
+    // If forceSelf is true, always delegate to self and mark as dedelegation
+    if (forceSelf) {
+      delegateTo = account
+      delegateeName = 'Self'
+      delegationActionType = 'dedelegation'
+    } else {
+      switch (delegationType) {
+        case 'self':
+          delegateTo = account
+          delegateeName = 'Self'
+          delegationActionType = 'dedelegation'
+          break
+        case 'steward':
+          if (!selectedSteward) {
+            setMessage('Please select a steward!')
+            return
+          }
+          delegateTo = selectedSteward.address
+          delegateeName = getDisplayName(selectedSteward.address, selectedSteward.name)
+          break
+        case 'custom':
+          if (!customAddress || !customAddress.startsWith('0x') || customAddress.length !== 42) {
+            setMessage('Please enter a valid Ethereum address!')
+            return
+          }
+          delegateTo = customAddress
+          delegateeName = 'Custom Address'
+          break
+        default:
           return
-        }
-        delegateTo = selectedSteward.address
-        delegateeName = getDisplayName(selectedSteward.address, selectedSteward.name)
-        break
-      case 'custom':
-        if (!customAddress || !customAddress.startsWith('0x') || customAddress.length !== 42) {
-          setMessage('Please enter a valid Ethereum address!')
-          return
-        }
-        delegateTo = customAddress
-        delegateeName = 'Custom Address'
-        break
-      default:
-        return
+      }
     }
 
     setIsLoading(true)
-    setMessage('Processing delegation...')
+    setMessage(forceSelf ? 'Processing dedelegation...' : 'Processing delegation...')
 
     try {
       const contract = createContract()
       if (!contract) throw new Error('Could not create contract instance')
-      
+
+      // Check if this delegation already exists (prevent duplicates)
+      const isDuplicate = delegationHistory.some(record =>
+        record.from.toLowerCase() === account.toLowerCase() &&
+        record.to.toLowerCase() === delegateTo.toLowerCase() &&
+        Math.abs(record.timestamp - Date.now()) < 60000 // Within 1 minute
+      )
+
+      if (isDuplicate) {
+        setMessage(`⚠️ Delegation already recorded recently. Skipping duplicate.`)
+        setCurrentDelegate(delegateTo)
+        setIsLoading(false)
+        return
+      }
+
       const tx = await contract.send('delegate', [delegateTo])
-      setMessage('Transaction sent! Waiting for confirmation...')
-      
+      setMessage(forceSelf ? 'Dedelegation transaction sent! Waiting for confirmation...' : 'Transaction sent! Waiting for confirmation...')
+
       const receipt = await tx.wait()
-      
+
       const delegationRecord = {
         from: account,
         to: delegateTo,
         toName: delegateeName,
         timestamp: Date.now(),
         transactionHash: receipt.transactionHash || tx.hash,
-        type: 'delegation',
+        type: delegationActionType,
         network: 'base',
         gasUsed: receipt.gasUsed || 'N/A',
-        blockNumber: receipt.blockNumber || 'N/A'
+        blockNumber: receipt.blockNumber || 'N/A',
+        walletUsed: connectedWallet?.name || 'Unknown',
+        walletId: connectedWallet?.id || 'unknown'
       }
-      
+
       const newHistory = [...delegationHistory, delegationRecord]
       setDelegationHistory(newHistory)
       localStorage.setItem('unlock_delegations', JSON.stringify(newHistory))
-      
+
       setCurrentDelegate(delegateTo)
-      setMessage(`✅ Successfully delegated to ${delegateeName}! Transaction: ${receipt.transactionHash || tx.hash}`)
-      
+      setMessage(forceSelf
+        ? `✅ Successfully dedelegated (delegated to yourself)! Transaction: ${receipt.transactionHash || tx.hash}`
+        : `✅ Successfully delegated to ${delegateeName}! Transaction: ${receipt.transactionHash || tx.hash}`
+      )
+
       setDelegationType('self')
       setSelectedSteward(null)
       setCustomAddress('')
-      
+
       await getTokenInfo(account)
-      
+
     } catch (error) {
       console.error('Delegation error:', error)
       setMessage('❌ Delegation failed: ' + error.message)
@@ -453,6 +710,197 @@ function App() {
     const hue = parseInt(hash, 16) % 360
     return [`hsl(${hue}, 70%, 50%)`, `hsl(${(hue + 60) % 360}, 70%, 60%)`]
   }
+
+  // Wallet Modal Component
+  const WalletModal = () => (
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 1000
+    }}>
+      <div style={{
+        backgroundColor: 'white',
+        borderRadius: '16px',
+        padding: '2rem',
+        maxWidth: '500px',
+        width: '90%',
+        maxHeight: '80vh',
+        overflowY: 'auto'
+      }}>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '1.5rem'
+        }}>
+          <h2 style={{ margin: 0, fontSize: '24px', color: '#1f2937' }}>
+            Connect Wallet
+          </h2>
+          <button
+            onClick={() => setShowWalletModal(false)}
+            style={{
+              background: 'none',
+              border: 'none',
+              fontSize: '24px',
+              cursor: 'pointer',
+              color: '#6b7280'
+            }}
+          >
+            ×
+          </button>
+        </div>
+        
+        <p style={{ color: '#6b7280', marginBottom: '1.5rem', fontSize: '16px' }}>
+          Choose your preferred wallet to connect and start delegating your UP tokens.
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {WALLET_CONFIG.map((wallet) => {
+            const isAvailable = wallet.checkAvailability()
+            const isWalletConnect = wallet.type === 'walletconnect'
+            const canConnect = isAvailable || isWalletConnect || typeof window.ethereum !== 'undefined'
+            
+            return (
+              <button
+                key={wallet.id}
+                onClick={() => !isLoading && connectWallet(wallet.id)}
+                disabled={isLoading}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '1rem',
+                  padding: '1rem 1.5rem',
+                  border: '2px solid #e5e7eb',
+                  borderRadius: '12px',
+                  backgroundColor: canConnect ? 'white' : '#f9fafb',
+                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease',
+                  opacity: canConnect ? 1 : 0.7,
+                  width: '100%',
+                  textAlign: 'left'
+                }}
+                onMouseEnter={(e) => {
+                  if (canConnect && !isLoading) {
+                    e.target.style.borderColor = '#3b82f6'
+                    e.target.style.backgroundColor = '#eff6ff'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (canConnect && !isLoading) {
+                    e.target.style.borderColor = '#e5e7eb'
+                    e.target.style.backgroundColor = 'white'
+                  }
+                }}
+              >
+                <div style={{
+                  fontSize: '32px',
+                  width: '48px',
+                  height: '48px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#f3f4f6',
+                  borderRadius: '12px'
+                }}>
+                  {wallet.icon}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{
+                    fontSize: '18px',
+                    fontWeight: 'bold',
+                    color: '#1f2937',
+                    marginBottom: '0.25rem'
+                  }}>
+                    {wallet.name}
+                    {!isAvailable && !isWalletConnect && (
+                      <span style={{
+                        fontSize: '12px',
+                        color: '#f59e0b',
+                        fontWeight: 'normal',
+                        marginLeft: '0.5rem'
+                      }}>
+                        (Click to install)
+                      </span>
+                    )}
+                  </div>
+                  <div style={{
+                    fontSize: '14px',
+                    color: '#6b7280'
+                  }}>
+                    {wallet.description}
+                  </div>
+                </div>
+                <div style={{
+                  fontSize: '20px',
+                  color: '#6b7280'
+                }}>
+                  {!isAvailable && !isWalletConnect && typeof window.ethereum === 'undefined' ? '📥' : '→'}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+
+        <div style={{
+          marginTop: '1.5rem',
+          padding: '1rem',
+          backgroundColor: '#f0f9ff',
+          borderRadius: '8px',
+          border: '1px solid #0ea5e9'
+        }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            marginBottom: '0.5rem'
+          }}>
+            <span style={{ fontSize: '16px' }}>💡</span>
+            <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#0c4a6e' }}>
+              Don't have a wallet?
+            </span>
+          </div>
+          <p style={{
+            margin: 0,
+            fontSize: '14px',
+            color: '#0c4a6e',
+            marginBottom: '0.5rem'
+          }}>
+            Click on any wallet above to be redirected to their download page.
+            We recommend MetaMask for beginners - it's free, secure, and easy to use.
+          </p>
+          <p style={{
+            margin: 0,
+            fontSize: '12px',
+            color: '#0369a1'
+          }}>
+            💡 <strong>Pro tip:</strong> WalletConnect and Mobile Wallet work with any mobile wallet app!
+          </p>
+        </div>
+
+        {message && (
+          <div style={{
+            marginTop: '1rem',
+            padding: '0.75rem',
+            background: message.includes('✅') ? '#dcfce7' : 
+                       message.includes('❌') ? '#fee2e2' : '#dbeafe',
+            color: message.includes('✅') ? '#166534' : 
+                   message.includes('❌') ? '#dc2626' : '#1e40af',
+            borderRadius: '8px',
+            fontSize: '14px'
+          }}>
+            {message}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 
   return (
     <div style={{
@@ -496,20 +944,54 @@ function App() {
             </div>
             
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              {isConnected && (
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '14px', color: '#6b7280' }}>Connected:</div>
-                  <div style={{ fontWeight: 'bold', color: '#1f2937' }}>
-                    {formatAddress(account)}
+              {isConnected ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                      Connected via {connectedWallet?.name}
+                    </div>
+                    <div style={{ fontWeight: 'bold', color: '#1f2937' }}>
+                      {formatAddress(account)}
+                    </div>
                   </div>
+                  <button
+                    onClick={disconnectWallet}
+                    style={{
+                      background: '#ef4444',
+                      color: 'white',
+                      border: 'none',
+                      padding: '0.5rem 1rem',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Disconnect
+                  </button>
                 </div>
+              ) : (
+                <button
+                  onClick={() => setShowWalletModal(true)}
+                  style={{
+                    background: '#2563eb',
+                    color: 'white',
+                    border: 'none',
+                    padding: '0.75rem 1.5rem',
+                    borderRadius: '8px',
+                    fontSize: '16px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Connect Wallet
+                </button>
               )}
             </div>
           </div>
         </div>
 
         {!isConnected ? (
-          /* Connect Wallet */
+          /* Connect Wallet Preview */
           <div style={{
             background: 'white',
             borderRadius: '12px',
@@ -519,12 +1001,78 @@ function App() {
             maxWidth: '500px',
             margin: '0 auto'
           }}>
-            <h2 style={{ marginBottom: '1rem', color: '#1f2937' }}>Connect Your Wallet</h2>
+            <h2 style={{ marginBottom: '1rem', color: '#1f2937' }}>Choose Your Wallet</h2>
             <p style={{ color: '#6b7280', marginBottom: '2rem' }}>
-              Connect your wallet to start delegating your UP token voting rights
+              Select from multiple wallet options to connect and start delegating your UP tokens
             </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '2rem' }}>
+              {WALLET_CONFIG.slice(0, 3).map((wallet) => {
+                const isAvailable = wallet.checkAvailability()
+                const isWalletConnect = wallet.type === 'walletconnect'
+                const canConnect = isAvailable || isWalletConnect || typeof window.ethereum !== 'undefined'
+                
+                return (
+                  <button
+                    key={wallet.id}
+                    onClick={() => connectWallet(wallet.id)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '1rem',
+                      padding: '1rem',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px',
+                      backgroundColor: canConnect ? '#f9fafb' : '#f3f4f6',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      opacity: canConnect ? 1 : 0.7,
+                      width: '100%',
+                      textAlign: 'left'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (canConnect) {
+                        e.target.style.borderColor = '#3b82f6'
+                        e.target.style.backgroundColor = '#eff6ff'
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (canConnect) {
+                        e.target.style.borderColor = '#e5e7eb'
+                        e.target.style.backgroundColor = '#f9fafb'
+                      }
+                    }}
+                  >
+                    <span style={{ fontSize: '24px' }}>{wallet.icon}</span>
+                    <div style={{ textAlign: 'left', flex: 1 }}>
+                      <div style={{ fontWeight: 'bold', color: '#1f2937' }}>
+                        {wallet.name}
+                        {!isAvailable && !isWalletConnect && (
+                          <span style={{
+                            fontSize: '12px',
+                            color: '#f59e0b',
+                            fontWeight: 'normal',
+                            marginLeft: '0.5rem'
+                          }}>
+                            (Click to install)
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '14px', color: '#6b7280' }}>{wallet.description}</div>
+                    </div>
+                    <div style={{
+                      fontSize: '16px',
+                      color: '#6b7280'
+                    }}>
+                      {!isAvailable && !isWalletConnect && typeof window.ethereum === 'undefined' ? '📥' : '→'}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+            
             <button
-              onClick={connectWallet}
+              onClick={() => setShowWalletModal(true)}
               style={{
                 background: '#2563eb',
                 color: 'white',
@@ -537,8 +1085,9 @@ function App() {
                 width: '100%'
               }}
             >
-              Connect MetaMask
+              More Wallet Options
             </button>
+            
             {message && (
               <div style={{
                 marginTop: '1rem',
@@ -591,6 +1140,10 @@ function App() {
                   <div>
                     <div style={{ color: '#6b7280' }}>Voting Power:</div>
                     <div style={{ fontWeight: 'bold' }}>{votingPower} UP</div>
+                  </div>
+                  <div>
+                    <div style={{ color: '#6b7280' }}>Wallet:</div>
+                    <div style={{ fontWeight: 'bold' }}>{connectedWallet?.name}</div>
                   </div>
                   <div>
                     <div style={{ color: '#6b7280' }}>Network:</div>
@@ -747,7 +1300,7 @@ function App() {
                         color: '#374151'
                       }}
                     >
-                      Load More Stewards ({ALL_UNLOCK_STEWARDS.length - INITIAL_STEWARDS_COUNT} remaining)
+                      Load More Stewards 
                     </button>
                   )}
                   
@@ -796,23 +1349,43 @@ function App() {
               )}
 
               {/* Submit Button */}
-              <button
-                onClick={handleDelegate}
-                disabled={isLoading}
-                style={{
-                  background: isLoading ? '#9ca3af' : '#2563eb',
-                  color: 'white',
-                  border: 'none',
-                  padding: '1rem 2rem',
-                  borderRadius: '8px',
-                  fontSize: '16px',
-                  fontWeight: 'bold',
-                  cursor: isLoading ? 'not-allowed' : 'pointer',
-                  width: '100%'
-                }}
-              >
-                {isLoading ? 'Processing...' : 'Delegate Voting Rights'}
-              </button>
+              <div style={{ display: 'flex', gap: '1rem', flexDirection: 'row' }}>
+                <button
+                  onClick={() => handleDelegate()}
+                  disabled={isLoading}
+                  style={{
+                    background: isLoading ? '#9ca3af' : '#2563eb',
+                    color: 'white',
+                    border: 'none',
+                    padding: '1rem 2rem',
+                    borderRadius: '8px',
+                    fontSize: '16px',
+                    fontWeight: 'bold',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    width: '100%'
+                  }}
+                >
+                  {isLoading ? 'Processing...' : 'Delegate Voting Rights'}
+                </button>
+                <button
+                  onClick={() => handleDelegate(true)}
+                  disabled={isLoading}
+                  style={{
+                    background: isLoading ? '#9ca3af' : '#f59e0b',
+                    color: 'white',
+                    border: 'none',
+                    padding: '1rem 2rem',
+                    borderRadius: '8px',
+                    fontSize: '16px',
+                    fontWeight: 'bold',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    width: '100%'
+                  }}
+                  title="Remove delegation (delegate to yourself)"
+                >
+                  {isLoading ? 'Processing...' : 'Dedelegate'}
+                </button>
+              </div>
 
               {message && (
                 <div style={{
@@ -857,7 +1430,7 @@ function App() {
                   <p style={{ fontSize: '14px' }}>Your delegation transactions will appear here</p>
                 </div>
               ) : (
-                <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
                   {delegationHistory.slice().reverse().map((record, index) => (
                     <div key={index} style={{
                       border: '1px solid #e5e7eb',
@@ -867,14 +1440,14 @@ function App() {
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
                         <span style={{
-                          background: '#dcfce7',
-                          color: '#166534',
+                          background: record.type === 'dedelegation' ? '#fef3c7' : '#dcfce7',
+                          color: record.type === 'dedelegation' ? '#92400e' : '#166534',
                           padding: '0.25rem 0.5rem',
                           borderRadius: '4px',
                           fontSize: '12px',
                           fontWeight: 'bold'
                         }}>
-                          Delegation
+                          {record.type === 'dedelegation' ? 'Dedelegation' : 'Delegation'}
                         </span>
                         <span style={{ fontSize: '12px', color: '#6b7280' }}>
                           {formatDate(record.timestamp)}
@@ -886,14 +1459,16 @@ function App() {
                       </div>
                       
                       <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '0.5rem' }}>
+                        <strong>Wallet:</strong> {record.walletUsed || 'Unknown'}
+                        {' • '}
                         <strong>Network:</strong> {record.network}
-                        {record.gasUsed && (
+                        {record.gasUsed && record.gasUsed !== 'N/A' && (
                           <>
                             {' • '}
                             <strong>Gas Used:</strong> {record.gasUsed}
                           </>
                         )}
-                        {record.blockNumber && (
+                        {record.blockNumber && record.blockNumber !== 'N/A' && (
                           <>
                             {' • '}
                             <strong>Block:</strong> {record.blockNumber}
@@ -924,15 +1499,144 @@ function App() {
                 padding: '1rem',
                 marginTop: '1rem'
               }}>
-                <h4 style={{ margin: '0 0 0.5rem 0', color: '#1f2937' }}>Delegation Counter</h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <h4 style={{ margin: 0, color: '#1f2937' }}>Delegation Counter</h4>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    {/* Remove Duplicates button removed as per user request */}
+                    {delegationHistory.length > 0 && (
+                      <button
+                        onClick={() => {
+                          if (window.confirm('Are you sure you want to clear your entire delegation history? This action cannot be undone.')) {
+                            setDelegationHistory([])
+                            localStorage.removeItem('unlock_delegations')
+                            setMessage('✅ Delegation history cleared')
+                          }
+                        }}
+                        style={{
+                          background: '#ef4444',
+                          color: 'white',
+                          border: 'none',
+                          padding: '0.25rem 0.5rem',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Clear History
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {/* Counters first */}
                 <p style={{ margin: 0, fontSize: '14px', color: '#6b7280' }}>
-                  Total delegations made: <strong>{delegationHistory.length}</strong>
+                  Total delegations made: <strong>{delegationHistory.filter(r => r.type !== 'dedelegation').length}</strong>
                 </p>
+                <p style={{ margin: 0, fontSize: '14px', color: '#92400e' }}>
+                  Total dedelegations: <strong>{delegationHistory.filter(r => r.type === 'dedelegation').length}</strong>
+                </p>
+                {/* Delegation and Dedelegation Sections */}
+                <div style={{ display: 'flex', gap: '2rem', margin: '1rem 0' }}>
+                  {/* Collapsible Delegations Section */}
+                  <div style={{ flex: 1 }}>
+                    <button
+                      onClick={() => setShowDelegationsSection(s => !s)}
+                      style={{
+                        width: '100%',
+                        background: '#dcfce7',
+                        color: '#166534',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '0.5rem 0.75rem',
+                        fontWeight: 'bold',
+                        fontSize: '15px',
+                        marginBottom: '0.5rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        transition: 'background 0.2s',
+                        gap: '0.5rem',
+                        boxShadow: showDelegationsSection ? '0 2px 8px #dcfce7' : 'none'
+                      }}
+                    >
+                      <span style={{ flex: 1, textAlign: 'left' }}>Delegations</span>
+                      <span style={{ fontSize: '13px', marginLeft: 8, transition: 'transform 0.2s', display: 'inline-block', transform: showDelegationsSection ? 'rotate(180deg)' : 'none' }}>
+                        ▼
+                      </span>
+                    </button>
+                    {showDelegationsSection && (
+                      <div style={{ maxHeight: '180px', overflowY: 'auto', background: '#f3f4f6', borderRadius: '6px', paddingTop: '0.5rem', paddingBottom: '0.5rem' }}>
+                        <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: '13px' }}>
+                          {delegationHistory.filter(r => r.type !== 'dedelegation').length === 0 ? (
+                            <li style={{ color: '#6b7280', padding: '0.5rem' }}>No delegations</li>
+                          ) : (
+                            delegationHistory.filter(r => r.type !== 'dedelegation').map((r, i) => (
+                              <li key={i} style={{ marginBottom: '0.25rem', padding: '0.5rem 0.5rem 0.5rem 0.5rem', borderBottom: '1px solid #e5e7eb' }}>
+                                <span style={{ color: '#1f2937', fontWeight: 500 }}>{getDisplayName(r.to, r.toName)}</span>
+                                <span style={{ color: '#6b7280', marginLeft: 6 }}>({formatAddress(r.to)})</span>
+                                <span style={{ color: '#6b7280', marginLeft: 6 }}>{formatDate(r.timestamp)}</span>
+                              </li>
+                            ))
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                  {/* Collapsible Dedelegations Section */}
+                  <div style={{ flex: 1 }}>
+                    <button
+                      onClick={() => setShowDedelegationsSection(s => !s)}
+                      style={{
+                        width: '100%',
+                        background: '#fef3c7',
+                        color: '#92400e',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '0.5rem 0.75rem',
+                        fontWeight: 'bold',
+                        fontSize: '15px',
+                        marginBottom: '0.5rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        transition: 'background 0.2s',
+                        gap: '0.5rem',
+                        boxShadow: showDedelegationsSection ? '0 2px 8px #fef3c7' : 'none'
+                      }}
+                    >
+                      <span style={{ flex: 1, textAlign: 'left' }}>Dedelegations</span>
+                      <span style={{ fontSize: '13px', marginLeft: 8, transition: 'transform 0.2s', display: 'inline-block', transform: showDedelegationsSection ? 'rotate(180deg)' : 'none' }}>
+                        ▼
+                      </span>
+                    </button>
+                    {showDedelegationsSection && (
+                      <div style={{ maxHeight: '180px', overflowY: 'auto', background: '#f3f4f6', borderRadius: '6px', paddingTop: '0.5rem', paddingBottom: '0.5rem' }}>
+                        <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: '13px' }}>
+                          {delegationHistory.filter(r => r.type === 'dedelegation').length === 0 ? (
+                            <li style={{ color: '#6b7280', padding: '0.5rem' }}>No dedelegations</li>
+                          ) : (
+                            delegationHistory.filter(r => r.type === 'dedelegation').map((r, i) => (
+                              <li key={i} style={{ marginBottom: '0.25rem', padding: '0.5rem 0.5rem 0.5rem 0.5rem', borderBottom: '1px solid #e5e7eb' }}>
+                                <span style={{ color: '#1f2937', fontWeight: 500 }}>{getDisplayName(r.to, r.toName)}</span>
+                                <span style={{ color: '#6b7280', marginLeft: 6 }}>({formatAddress(r.to)})</span>
+                                <span style={{ color: '#6b7280', marginLeft: 6 }}>{formatDate(r.timestamp)}</span>
+                              </li>
+                            ))
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         )}
       </div>
+      
+      {/* Wallet Modal */}
+      {showWalletModal && <WalletModal />}
     </div>
   )
 }
