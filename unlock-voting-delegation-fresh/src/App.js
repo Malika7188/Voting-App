@@ -232,7 +232,7 @@ const UP_TOKEN_ABI = [
 ]
 
 function App() {
-  // Collapsible sections for Delegations and Dedelegations
+  // Collapsible sections for Delegations and Self-Delegations
   const [showDelegationsSection, setShowDelegationsSection] = useState(false)
   const [showDedelegationsSection, setShowDedelegationsSection] = useState(false)
   const [account, setAccount] = useState('')
@@ -588,7 +588,7 @@ function App() {
   }
 
   // Delegate tokens (with dedelegation tracking)
-  const handleDelegate = async (forceSelf = false) => {
+  const handleDelegate = async () => {
     if (!isConnected) {
       setMessage('Please connect your wallet first!')
       return
@@ -598,41 +598,34 @@ function App() {
     let delegateeName = ''
     let delegationActionType = 'delegation'
 
-    // If forceSelf is true, always delegate to self and mark as dedelegation
-    if (forceSelf) {
-      delegateTo = account
-      delegateeName = 'Self'
-      delegationActionType = 'dedelegation'
-    } else {
-      switch (delegationType) {
-        case 'self':
-          delegateTo = account
-          delegateeName = 'Self'
-          delegationActionType = 'dedelegation'
-          break
-        case 'steward':
-          if (!selectedSteward) {
-            setMessage('Please select a steward!')
-            return
-          }
-          delegateTo = selectedSteward.address
-          delegateeName = getDisplayName(selectedSteward.address, selectedSteward.name)
-          break
-        case 'custom':
-          if (!customAddress || !customAddress.startsWith('0x') || customAddress.length !== 42) {
-            setMessage('Please enter a valid Ethereum address!')
-            return
-          }
-          delegateTo = customAddress
-          delegateeName = 'Custom Address'
-          break
-        default:
+    switch (delegationType) {
+      case 'self':
+        delegateTo = account
+        delegateeName = 'Self'
+        delegationActionType = 'selfdelegation'
+        break
+      case 'steward':
+        if (!selectedSteward) {
+          setMessage('Please select a steward!')
           return
-      }
+        }
+        delegateTo = selectedSteward.address
+        delegateeName = getDisplayName(selectedSteward.address, selectedSteward.name)
+        break
+      case 'custom':
+        if (!customAddress || !customAddress.startsWith('0x') || customAddress.length !== 42) {
+          setMessage('Please enter a valid Ethereum address!')
+          return
+        }
+        delegateTo = customAddress
+        delegateeName = 'Custom Address'
+        break
+      default:
+        return
     }
 
     setIsLoading(true)
-    setMessage(forceSelf ? 'Processing dedelegation...' : 'Processing delegation...')
+    setMessage(delegationType === 'self' ? 'Processing self-delegation...' : 'Processing delegation...')
 
     try {
       const contract = createContract()
@@ -653,7 +646,7 @@ function App() {
       }
 
       const tx = await contract.send('delegate', [delegateTo])
-      setMessage(forceSelf ? 'Dedelegation transaction sent! Waiting for confirmation...' : 'Transaction sent! Waiting for confirmation...')
+      setMessage(delegationType === 'self' ? 'Self-delegation transaction sent! Waiting for confirmation...' : 'Transaction sent! Waiting for confirmation...')
 
       const receipt = await tx.wait()
 
@@ -676,8 +669,8 @@ function App() {
       localStorage.setItem('unlock_delegations', JSON.stringify(newHistory))
 
       setCurrentDelegate(delegateTo)
-      setMessage(forceSelf
-        ? `✅ Successfully dedelegated (delegated to yourself)! Transaction: ${receipt.transactionHash || tx.hash}`
+      setMessage(delegationType === 'self'
+        ? `✅ Successfully self-delegated! Transaction: ${receipt.transactionHash || tx.hash}`
         : `✅ Successfully delegated to ${delegateeName}! Transaction: ${receipt.transactionHash || tx.hash}`
       )
 
@@ -1351,7 +1344,7 @@ function App() {
               {/* Submit Button */}
               <div style={{ display: 'flex', gap: '1rem', flexDirection: 'row' }}>
                 <button
-                  onClick={() => handleDelegate()}
+                  onClick={handleDelegate}
                   disabled={isLoading}
                   style={{
                     background: isLoading ? '#9ca3af' : '#2563eb',
@@ -1366,24 +1359,6 @@ function App() {
                   }}
                 >
                   {isLoading ? 'Processing...' : 'Delegate Voting Rights'}
-                </button>
-                <button
-                  onClick={() => handleDelegate(true)}
-                  disabled={isLoading}
-                  style={{
-                    background: isLoading ? '#9ca3af' : '#f59e0b',
-                    color: 'white',
-                    border: 'none',
-                    padding: '1rem 2rem',
-                    borderRadius: '8px',
-                    fontSize: '16px',
-                    fontWeight: 'bold',
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
-                    width: '100%'
-                  }}
-                  title="Remove delegation (delegate to yourself)"
-                >
-                  {isLoading ? 'Processing...' : 'Dedelegate'}
                 </button>
               </div>
 
@@ -1409,8 +1384,8 @@ function App() {
               }}>
                 <h4 style={{ margin: '0 0 0.5rem 0', color: '#1e40af' }}>About Delegation</h4>
                 <p style={{ margin: 0, color: '#1e40af' }}>
-                  Delegating allows you or someone else to vote on your behalf in Unlock Protocol governance. 
-                  You can change your delegation at any time. Your tokens remain in your wallet.
+                  Delegating allows you or someone else to vote on your behalf in Unlock Protocol governance.
+                  You can change your delegation at any time by self delegation. Your tokens remain in your wallet.
                 </p>
               </div>
             </div>
@@ -1529,10 +1504,10 @@ function App() {
                 </div>
                 {/* Counters first */}
                 <p style={{ margin: 0, fontSize: '14px', color: '#6b7280' }}>
-                  Total delegations made: <strong>{delegationHistory.filter(r => r.type !== 'dedelegation').length}</strong>
+                  Total delegations made: <strong>{delegationHistory.filter(r => r.type !== 'selfdelegation').length}</strong>
                 </p>
                 <p style={{ margin: 0, fontSize: '14px', color: '#92400e' }}>
-                  Total dedelegations: <strong>{delegationHistory.filter(r => r.type === 'dedelegation').length}</strong>
+                  Total self delegations: <strong>{delegationHistory.filter(r => r.type === 'selfdelegation').length}</strong>
                 </p>
                 {/* Delegation and Dedelegation Sections */}
                 <div style={{ display: 'flex', gap: '2rem', margin: '1rem 0' }}>
@@ -1567,10 +1542,10 @@ function App() {
                     {showDelegationsSection && (
                       <div style={{ maxHeight: '180px', overflowY: 'auto', background: '#f3f4f6', borderRadius: '6px', paddingTop: '0.5rem', paddingBottom: '0.5rem' }}>
                         <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: '13px' }}>
-                          {delegationHistory.filter(r => r.type !== 'dedelegation').length === 0 ? (
+                          {delegationHistory.filter(r => r.type !== 'selfdelegation').length === 0 ? (
                             <li style={{ color: '#6b7280', padding: '0.5rem' }}>No delegations</li>
                           ) : (
-                            delegationHistory.filter(r => r.type !== 'dedelegation').map((r, i) => (
+                            delegationHistory.filter(r => r.type !== 'selfdelegation').map((r, i) => (
                               <li key={i} style={{ marginBottom: '0.25rem', padding: '0.5rem 0.5rem 0.5rem 0.5rem', borderBottom: '1px solid #e5e7eb' }}>
                                 <span style={{ color: '#1f2937', fontWeight: 500 }}>{getDisplayName(r.to, r.toName)}</span>
                                 <span style={{ color: '#6b7280', marginLeft: 6 }}>({formatAddress(r.to)})</span>
@@ -1605,7 +1580,7 @@ function App() {
                         boxShadow: showDedelegationsSection ? '0 2px 8px #fef3c7' : 'none'
                       }}
                     >
-                      <span style={{ flex: 1, textAlign: 'left' }}>Dedelegations</span>
+                      <span style={{ flex: 1, textAlign: 'left' }}>Self Delegations</span>
                       <span style={{ fontSize: '13px', marginLeft: 8, transition: 'transform 0.2s', display: 'inline-block', transform: showDedelegationsSection ? 'rotate(180deg)' : 'none' }}>
                         ▼
                       </span>
@@ -1613,10 +1588,10 @@ function App() {
                     {showDedelegationsSection && (
                       <div style={{ maxHeight: '180px', overflowY: 'auto', background: '#f3f4f6', borderRadius: '6px', paddingTop: '0.5rem', paddingBottom: '0.5rem' }}>
                         <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: '13px' }}>
-                          {delegationHistory.filter(r => r.type === 'dedelegation').length === 0 ? (
-                            <li style={{ color: '#6b7280', padding: '0.5rem' }}>No dedelegations</li>
+                          {delegationHistory.filter(r => r.type === 'selfdelegation').length === 0 ? (
+                            <li style={{ color: '#6b7280', padding: '0.5rem' }}>No self delegations</li>
                           ) : (
-                            delegationHistory.filter(r => r.type === 'dedelegation').map((r, i) => (
+                            delegationHistory.filter(r => r.type === 'selfdelegation').map((r, i) => (
                               <li key={i} style={{ marginBottom: '0.25rem', padding: '0.5rem 0.5rem 0.5rem 0.5rem', borderBottom: '1px solid #e5e7eb' }}>
                                 <span style={{ color: '#1f2937', fontWeight: 500 }}>{getDisplayName(r.to, r.toName)}</span>
                                 <span style={{ color: '#6b7280', marginLeft: 6 }}>({formatAddress(r.to)})</span>
