@@ -1477,33 +1477,12 @@ function App() {
                   <h4 style={{ margin: 0, color: '#1f2937' }}>Delegation Counter</h4>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     {/* Remove Duplicates button removed as per user request */}
-                    {delegationHistory.length > 0 && (
-                      <button
-                        onClick={() => {
-                          if (window.confirm('Are you sure you want to clear your entire delegation history? This action cannot be undone.')) {
-                            setDelegationHistory([])
-                            localStorage.removeItem('unlock_delegations')
-                            setMessage('✅ Delegation history cleared')
-                          }
-                        }}
-                        style={{
-                          background: '#ef4444',
-                          color: 'white',
-                          border: 'none',
-                          padding: '0.25rem 0.5rem',
-                          borderRadius: '4px',
-                          fontSize: '12px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Clear History
-                      </button>
-                    )}
+                   
                   </div>
                 </div>
                 {/* Counters first */}
                 <p style={{ margin: 0, fontSize: '14px', color: '#6b7280' }}>
-                  Total delegations made: <strong>{delegationHistory.filter(r => r.type !== 'selfdelegation').length}</strong>
+                  Total delegations made: <strong>{delegationHistory.length}</strong>
                 </p>
                 <p style={{ margin: 0, fontSize: '14px', color: '#92400e' }}>
                   Total self delegations: <strong>{delegationHistory.filter(r => r.type === 'selfdelegation').length}</strong>
