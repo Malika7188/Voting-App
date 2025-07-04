@@ -68,11 +68,6 @@ npm start
 - **UP Token**: `0xac27fa800955849d6d17cc8952ba9dd6eaa66187`
 - **Explorer**: [BaseScan](https://basescan.org)
 
-### Base Sepolia Testnet
-- **Chain ID**: 84532
-- **RPC**: `https://sepolia.base.org`
-- **Explorer**: [Base Sepolia](https://sepolia.basescan.org)
-- **Faucets**: [Get testnet ETH](https://docs.base.org/tools/network-faucets)
 
 ## 🔧 Key Features
 
