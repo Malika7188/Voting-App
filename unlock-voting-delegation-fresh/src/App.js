@@ -1,4 +1,6 @@
+
 import React, { useState, useEffect } from 'react'
+import { ethers } from 'ethers'
 
 // Real UP Token Address on Base
 const UP_TOKEN_ADDRESS = '0xac27fa800955849d6d17cc8952ba9dd6eaa66187'
@@ -249,7 +251,31 @@ function App() {
   const [delegationHistory, setDelegationHistory] = useState([])
   const [isLoading, setIsLoading] = useState(false)
   const [message, setMessage] = useState('')
-  const [useRealContract] = useState(true)
+
+  // Accessibility: trap focus in modal and close on Esc
+  useEffect(() => {
+    if (!showWalletModal) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setShowWalletModal(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showWalletModal]);
+
+  // Accessibility: focus first button in modal
+  useEffect(() => {
+    if (showWalletModal) {
+      setTimeout(() => {
+        const btn = document.querySelector('[data-wallet-btn]');
+        if (btn) btn.focus();
+      }, 100);
+    }
+  }, [showWalletModal]);
+
+  // Error message for getTokenInfo
+  const [tokenInfoError, setTokenInfoError] = useState('');
+
+  // ...existing code...
   const [ensNames, setEnsNames] = useState({})
   const [showAllStewards, setShowAllStewards] = useState(false)
 
@@ -482,110 +508,55 @@ function App() {
     setMessage('Wallet disconnected')
   }
 
-  // Create contract instance using the connected provider
+  // Create contract instance using ethers.js v6 and the connected provider
   const createContract = () => {
-    const provider = connectedProvider || window.ethereum
-    if (!provider) return null
-    
-    return {
-      call: async (functionName, params = []) => {
-        const functionAbi = UP_TOKEN_ABI.find(f => f.name === functionName)
-        if (!functionAbi) throw new Error(`Function ${functionName} not found`)
-        
-        if (functionName === 'balanceOf') {
-          return useRealContract ? '0' : '1000000000000000000000'
-        }
-        if (functionName === 'delegates') {
-          return useRealContract ? '0x0000000000000000000000000000000000000000' : account
-        }
-        if (functionName === 'getVotes') {
-          return useRealContract ? '0' : '1000000000000000000000'
-        }
-        
-        return '0'
-      },
-      
-      send: async (functionName, params = []) => {
-        if (!useRealContract) {
-          await new Promise(resolve => setTimeout(resolve, 2000))
-          return {
-            hash: '0x' + Math.random().toString(16).substr(2, 64),
-            wait: async () => ({
-              transactionHash: '0x' + Math.random().toString(16).substr(2, 64),
-              blockNumber: Math.floor(Math.random() * 1000000),
-              gasUsed: '21000'
-            })
-          }
-        }
-        
-        const functionAbi = UP_TOKEN_ABI.find(f => f.name === functionName)
-        if (!functionAbi) throw new Error(`Function ${functionName} not found`)
-        
-        // Use the specific connected provider for transactions
-        const txParams = {
-          to: UP_TOKEN_ADDRESS,
-          from: account,
-          data: '0x5c19a95c000000000000000000000000' + params[0].slice(2),
-          gas: '0x15F90',
-        }
-        
-        // Make sure we're using the correct provider
-        const txHash = await provider.request({
-          method: 'eth_sendTransaction',
-          params: [txParams],
-        })
-        
-        return {
-          hash: txHash,
-          wait: async () => {
-            let receipt = null
-            let attempts = 0
-            while (!receipt && attempts < 30) {
-              try {
-                receipt = await provider.request({
-                  method: 'eth_getTransactionReceipt',
-                  params: [txHash],
-                })
-                if (!receipt) {
-                  await new Promise(resolve => setTimeout(resolve, 1000))
-                  attempts++
-                }
-              } catch (error) {
-                await new Promise(resolve => setTimeout(resolve, 1000))
-                attempts++
-              }
-            }
-            return receipt || { transactionHash: txHash, blockNumber: 'pending', gasUsed: 'unknown' }
-          }
-        }
+    let provider;
+    if (connectedProvider) {
+      // If already a BrowserProvider, use as is
+      if (connectedProvider instanceof ethers.BrowserProvider) {
+        provider = connectedProvider;
+      } else {
+        provider = new ethers.BrowserProvider(connectedProvider);
       }
+    } else if (window.ethereum) {
+      provider = new ethers.BrowserProvider(window.ethereum);
+    } else {
+      setTokenInfoError('No Ethereum provider found. Please install MetaMask or another wallet.');
+      return null;
     }
-  }
 
-  // Get token balance and delegation info
+    // ethers v6: getSigner is async
+    return provider.getSigner().then(signer => new ethers.Contract(UP_TOKEN_ADDRESS, UP_TOKEN_ABI, signer));
+  };
+
+  // Get token balance and delegation info using ethers.js v6
   const getTokenInfo = async (address) => {
     try {
-      const contract = createContract()
-      if (!contract) return
-      
-      const rawBalance = await contract.call('balanceOf', [address])
-      const balanceInEther = parseFloat(rawBalance) / Math.pow(10, 18)
-      setBalance(balanceInEther.toFixed(2))
-      
-      const delegate = await contract.call('delegates', [address])
-      setCurrentDelegate(delegate)
-      
-      const votes = await contract.call('getVotes', [address])
-      const votingPowerInEther = parseFloat(votes) / Math.pow(10, 18)
-      setVotingPower(votingPowerInEther.toFixed(2))
-      
+      setTokenInfoError('');
+      const contract = await createContract();
+      if (!contract) return;
+
+      // Fetch balance
+      const rawBalance = await contract.balanceOf(address);
+      const balanceInEther = Number(ethers.formatUnits(rawBalance, 18));
+      setBalance(balanceInEther.toFixed(2));
+
+      // Fetch delegate
+      const delegate = await contract.delegates(address);
+      setCurrentDelegate(delegate);
+
+      // Fetch voting power
+      const votes = await contract.getVotes(address);
+      const votingPowerInEther = Number(ethers.formatUnits(votes, 18));
+      setVotingPower(votingPowerInEther.toFixed(2));
     } catch (error) {
-      console.error('Error getting token info:', error)
-      setBalance('1000.00')
-      setCurrentDelegate(address)
-      setVotingPower('1000.00')
+      setTokenInfoError('Could not fetch token info. Showing fallback values.');
+      console.error('Error getting token info:', error);
+      setBalance('1000.00');
+      setCurrentDelegate(address);
+      setVotingPower('1000.00');
     }
-  }
+  };
 
   // Delegate tokens (with dedelegation tracking)
   const handleDelegate = async () => {
@@ -628,27 +599,29 @@ function App() {
     setMessage(delegationType === 'self' ? 'Processing self-delegation...' : 'Processing delegation...')
 
     try {
-      const contract = createContract()
-      if (!contract) throw new Error('Could not create contract instance')
+
+      const contract = await createContract();
+      if (!contract) throw new Error('Could not create contract instance');
 
       // Check if this delegation already exists (prevent duplicates)
       const isDuplicate = delegationHistory.some(record =>
         record.from.toLowerCase() === account.toLowerCase() &&
         record.to.toLowerCase() === delegateTo.toLowerCase() &&
         Math.abs(record.timestamp - Date.now()) < 60000 // Within 1 minute
-      )
+      );
 
       if (isDuplicate) {
-        setMessage(`⚠️ Delegation already recorded recently. Skipping duplicate.`)
-        setCurrentDelegate(delegateTo)
-        setIsLoading(false)
-        return
+        setMessage(`⚠️ Delegation already recorded recently. Skipping duplicate.`);
+        setCurrentDelegate(delegateTo);
+        setIsLoading(false);
+        return;
       }
 
-      const tx = await contract.send('delegate', [delegateTo])
-      setMessage(delegationType === 'self' ? 'Self-delegation transaction sent! Waiting for confirmation...' : 'Transaction sent! Waiting for confirmation...')
+      // Call the delegate function directly (ethers v6)
+      const tx = await contract.delegate(delegateTo);
+      setMessage(delegationType === 'self' ? 'Self-delegation transaction sent! Waiting for confirmation...' : 'Transaction sent! Waiting for confirmation...');
 
-      const receipt = await tx.wait()
+      const receipt = await tx.wait();
 
       const delegationRecord = {
         from: account,
@@ -658,8 +631,8 @@ function App() {
         transactionHash: receipt.transactionHash || tx.hash,
         type: delegationActionType,
         network: 'base',
-        gasUsed: receipt.gasUsed || 'N/A',
-        blockNumber: receipt.blockNumber || 'N/A',
+        gasUsed: receipt.gasUsed !== undefined && receipt.gasUsed !== null ? receipt.gasUsed.toString() : 'N/A',
+        blockNumber: receipt.blockNumber !== undefined && receipt.blockNumber !== null ? receipt.blockNumber.toString() : 'N/A',
         walletUsed: connectedWallet?.name || 'Unknown',
         walletId: connectedWallet?.id || 'unknown'
       }
@@ -705,38 +678,49 @@ function App() {
   }
 
   // Wallet Modal Component
+  // Wallet Modal Component (with accessibility improvements)
   const WalletModal = () => (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 1000
-    }}>
-      <div style={{
-        backgroundColor: 'white',
-        borderRadius: '16px',
-        padding: '2rem',
-        maxWidth: '500px',
-        width: '90%',
-        maxHeight: '80vh',
-        overflowY: 'auto'
-      }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '1.5rem'
-        }}>
-          <h2 style={{ margin: 0, fontSize: '24px', color: '#1f2937' }}>
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="wallet-modal-title"
+    >
+      <div
+        style={{
+          backgroundColor: 'white',
+          borderRadius: '16px',
+          padding: '2rem',
+          maxWidth: '500px',
+          width: '90%',
+          maxHeight: '80vh',
+          overflowY: 'auto'
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '1.5rem'
+          }}
+        >
+          <h2 id="wallet-modal-title" style={{ margin: 0, fontSize: '24px', color: '#1f2937' }}>
             Connect Wallet
           </h2>
           <button
+            aria-label="Close wallet modal"
             onClick={() => setShowWalletModal(false)}
             style={{
               background: 'none',
@@ -749,20 +733,21 @@ function App() {
             ×
           </button>
         </div>
-        
+
         <p style={{ color: '#6b7280', marginBottom: '1.5rem', fontSize: '16px' }}>
           Choose your preferred wallet to connect and start delegating your UP tokens.
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          {WALLET_CONFIG.map((wallet) => {
-            const isAvailable = wallet.checkAvailability()
-            const isWalletConnect = wallet.type === 'walletconnect'
-            const canConnect = isAvailable || isWalletConnect || typeof window.ethereum !== 'undefined'
-            
+          {WALLET_CONFIG.map((wallet, idx) => {
+            const isAvailable = wallet.checkAvailability();
+            const isWalletConnect = wallet.type === 'walletconnect';
+            const canConnect = isAvailable || isWalletConnect || typeof window.ethereum !== 'undefined';
             return (
               <button
                 key={wallet.id}
+                data-wallet-btn={idx === 0 ? true : undefined}
+                aria-label={`Connect ${wallet.name}`}
                 onClick={() => !isLoading && connectWallet(wallet.id)}
                 disabled={isLoading}
                 style={{
@@ -781,14 +766,14 @@ function App() {
                 }}
                 onMouseEnter={(e) => {
                   if (canConnect && !isLoading) {
-                    e.target.style.borderColor = '#3b82f6'
-                    e.target.style.backgroundColor = '#eff6ff'
+                    e.target.style.borderColor = '#3b82f6';
+                    e.target.style.backgroundColor = '#eff6ff';
                   }
                 }}
                 onMouseLeave={(e) => {
                   if (canConnect && !isLoading) {
-                    e.target.style.borderColor = '#e5e7eb'
-                    e.target.style.backgroundColor = 'white'
+                    e.target.style.borderColor = '#e5e7eb';
+                    e.target.style.backgroundColor = 'white';
                   }
                 }}
               >
@@ -837,7 +822,7 @@ function App() {
                   {!isAvailable && !isWalletConnect && typeof window.ethereum === 'undefined' ? '📥' : '→'}
                 </div>
               </button>
-            )
+            );
           })}
         </div>
 
@@ -893,7 +878,7 @@ function App() {
         )}
       </div>
     </div>
-  )
+  );
 
   return (
     <div style={{
@@ -1149,6 +1134,20 @@ function App() {
                     </div>
                   </div>
                 </div>
+                {tokenInfoError && (
+                  <div style={{
+                    marginTop: '1rem',
+                    background: '#fee2e2',
+                    color: '#dc2626',
+                    borderRadius: '6px',
+                    padding: '0.75rem',
+                    fontSize: '14px',
+                    textAlign: 'center',
+                    border: '1px solid #fca5a5'
+                  }}>
+                    {tokenInfoError}
+                  </div>
+                )}
               </div>
 
               {/* Delegation Options */}
