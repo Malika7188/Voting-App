@@ -121,7 +121,7 @@ MIT - Open source and free to use.
 
 ## ✒️ Author
 
-👤 **Your Name**  
+👤 **Asman MAlika**  
 - GitHub: [Malika7188](https://github.com/Malika7188)  
 - LinkedIn: [Asman Malika](https://www.linkedin.com/in/asman-malika-84981a211/)  
 - Twitter: [@AsmanMalika](https://x.com/AsmanMalika)   
